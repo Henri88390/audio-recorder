@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from "react";
 import {
   FORMATS,
   QUALITIES,
@@ -8,15 +8,15 @@ import {
   type FormatId,
   type QualityId,
   type Recording,
-} from './lib/audio';
+} from "./lib/audio";
 
-type Source = 'system' | 'mic' | 'both';
-type Status = 'idle' | 'recording' | 'stopped';
+type Source = "system" | "mic" | "both";
+type Status = "idle" | "recording" | "stopped";
 
 const SOURCES: { id: Source; label: string }[] = [
-  { id: 'system', label: '🔊 Computer audio' },
-  { id: 'mic', label: '🎤 Microphone' },
-  { id: 'both', label: '🔊 + 🎤 Both' },
+  { id: "system", label: "🔊 Computer audio" },
+  { id: "mic", label: "🎤 Microphone" },
+  { id: "both", label: "🔊 + 🎤 Both" },
 ];
 
 const RAW_CONSTRAINTS: MediaTrackConstraints = {
@@ -33,65 +33,96 @@ interface Session {
 }
 
 const fmtTime = (s: number) =>
-  `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+  `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
 const fmtSize = (bytes: number) =>
-  bytes > 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${(bytes / 1024).toFixed(0)} KB`;
+  bytes > 1024 * 1024
+    ? `${(bytes / 1024 / 1024).toFixed(1)} MB`
+    : `${(bytes / 1024).toFixed(0)} KB`;
 
 /** Strips characters invalid in Windows/macOS/Linux file names and any extension the user typed. */
 const sanitizeFileName = (name: string) =>
   name
     .trim()
-    .replace(/\.(wav|mp3|mp4)$/i, '')
+    .replace(/\.(wav|mp3|mp4)$/i, "")
     // eslint-disable-next-line no-control-regex
-    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
-    .replace(/[. ]+$/, '');
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
+    .replace(/[. ]+$/, "");
 
 export default function App() {
-  const [source, setSource] = useState<Source>('system');
-  const [qualityId, setQualityId] = useState<QualityId>('high');
-  const [format, setFormat] = useState<FormatId>('mp3');
-  const [status, setStatus] = useState<Status>('idle');
+  const [source, setSource] = useState<Source>("system");
+  const [qualityId, setQualityId] = useState<QualityId>("high");
+  const [format, setFormat] = useState<FormatId>("mp3");
+  const [status, setStatus] = useState<Status>("idle");
   const [elapsed, setElapsed] = useState(0);
   const [level, setLevel] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [recording, setRecording] = useState<Recording | null>(null);
   const [exporting, setExporting] = useState<number | null>(null);
-  const [download, setDownload] = useState<{ url: string; name: string; size: number } | null>(null);
-  const [fileName, setFileName] = useState('');
-  const autoName = useRef('');
-  const [background, setBackground] = useState<{ file: File; url: string; width: number; height: number } | null>(null);
+  const [download, setDownload] = useState<{
+    url: string;
+    name: string;
+    size: number;
+  } | null>(null);
+  const [fileName, setFileName] = useState("");
+  const autoName = useRef("");
+  const [background, setBackground] = useState<{
+    file: File;
+    url: string;
+    width: number;
+    height: number;
+  } | null>(null);
 
   const session = useRef<Session | null>(null);
-  const timers = useRef<{ raf: number; interval: number }>({ raf: 0, interval: 0 });
+  const timers = useRef<{ raf: number; interval: number }>({
+    raf: 0,
+    interval: 0,
+  });
 
   const quality = QUALITIES.find((q) => q.id === qualityId)!;
   const effectiveFormat: FormatId = format;
-  const baseName = sanitizeFileName(fileName) || 'recording';
+  const baseName = sanitizeFileName(fileName) || "recording";
 
-  useEffect(() => () => { if (download) URL.revokeObjectURL(download.url); }, [download]);
-  useEffect(() => () => { if (background) URL.revokeObjectURL(background.url); }, [background]);
+  useEffect(
+    () => () => {
+      if (download) URL.revokeObjectURL(download.url);
+    },
+    [download],
+  );
+  useEffect(
+    () => () => {
+      if (background) URL.revokeObjectURL(background.url);
+    },
+    [background],
+  );
 
   async function pickBackground(file: File | undefined) {
     if (!file) return;
     setError(null);
     try {
       const img = await loadImage(file);
-      setBackground({ file, url: URL.createObjectURL(file), width: img.naturalWidth, height: img.naturalHeight });
+      setBackground({
+        file,
+        url: URL.createObjectURL(file),
+        width: img.naturalWidth,
+        height: img.naturalHeight,
+      });
     } catch {
-      setError(`“${file.name}” can't be used as an image. Try a JPEG, PNG or WebP file.`);
+      setError(
+        `“${file.name}” can't be used as an image. Try a JPEG, PNG or WebP file.`,
+      );
     }
   }
 
   async function getStreams(): Promise<MediaStream[]> {
     const streams: MediaStream[] = [];
     try {
-      if (source !== 'mic') {
+      if (source !== "mic") {
         // Chrome/Edge require video to be requested; the video track is ignored.
         const display = await navigator.mediaDevices.getDisplayMedia({
           video: true,
           audio: RAW_CONSTRAINTS,
-          systemAudio: 'include',
+          systemAudio: "include",
         } as DisplayMediaStreamOptions);
         if (display.getAudioTracks().length === 0) {
           display.getTracks().forEach((t) => t.stop());
@@ -101,8 +132,10 @@ export default function App() {
         }
         streams.push(display);
       }
-      if (source !== 'system') {
-        streams.push(await navigator.mediaDevices.getUserMedia({ audio: RAW_CONSTRAINTS }));
+      if (source !== "system") {
+        streams.push(
+          await navigator.mediaDevices.getUserMedia({ audio: RAW_CONSTRAINTS }),
+        );
       }
       return streams;
     } catch (e) {
@@ -117,14 +150,14 @@ export default function App() {
     setDownload(null);
     try {
       const streams = await getStreams();
-      const ctx = new AudioContext({ latencyHint: 'playback' });
-      await ctx.audioWorklet.addModule('/recorder-worklet.js');
+      const ctx = new AudioContext({ latencyHint: "playback" });
+      await ctx.audioWorklet.addModule("/recorder-worklet.js");
 
-      const node = new AudioWorkletNode(ctx, 'recorder-processor', {
+      const node = new AudioWorkletNode(ctx, "recorder-processor", {
         numberOfInputs: 1,
         numberOfOutputs: 1,
         channelCount: 2,
-        channelCountMode: 'explicit',
+        channelCountMode: "explicit",
       });
       const chunks: Float32Array[][] = [[], []];
       node.port.onmessage = (e: MessageEvent<Float32Array[]>) => {
@@ -134,11 +167,15 @@ export default function App() {
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 1024;
       for (const stream of streams) {
-        const src = ctx.createMediaStreamSource(new MediaStream(stream.getAudioTracks()));
+        const src = ctx.createMediaStreamSource(
+          new MediaStream(stream.getAudioTracks()),
+        );
         src.connect(node);
         src.connect(analyser);
         // Stop when the user clicks the browser's "Stop sharing" button.
-        stream.getTracks().forEach((t) => t.addEventListener('ended', () => stop()));
+        stream
+          .getTracks()
+          .forEach((t) => t.addEventListener("ended", () => stop()));
       }
       // Keep the graph pulling data without playing anything back (avoids feedback).
       const mute = ctx.createGain();
@@ -158,11 +195,15 @@ export default function App() {
       tick();
       const startedAt = performance.now();
       setElapsed(0);
-      timers.current.interval = window.setInterval(() => setElapsed((performance.now() - startedAt) / 1000), 250);
-      setStatus('recording');
+      timers.current.interval = window.setInterval(
+        () => setElapsed((performance.now() - startedAt) / 1000),
+        250,
+      );
+      setStatus("recording");
     } catch (e) {
-      if ((e as DOMException).name !== 'NotAllowedError') setError((e as Error).message);
-      else setError('Permission denied or capture cancelled.');
+      if ((e as DOMException).name !== "NotAllowedError")
+        setError((e as Error).message);
+      else setError("Permission denied or capture cancelled.");
     }
   }
 
@@ -172,7 +213,7 @@ export default function App() {
     session.current = null;
     cancelAnimationFrame(timers.current.raf);
     clearInterval(timers.current.interval);
-    s.node.port.postMessage('stop');
+    s.node.port.postMessage("stop");
     s.streams.forEach((st) => st.getTracks().forEach((t) => t.stop()));
     const sampleRate = s.ctx.sampleRate;
     await s.ctx.close();
@@ -187,18 +228,23 @@ export default function App() {
     const rec = await stopSession();
     setLevel(0);
     if (!rec) {
-      setStatus('idle');
+      setStatus("idle");
       return;
     }
     setRecording(rec);
-    const stamp = new Date().toLocaleString('sv').replace(' ', '_').replace(/:/g, '-');
+    const stamp = new Date()
+      .toLocaleString("sv")
+      .replace(" ", "_")
+      .replace(/:/g, "-");
     const newAuto = `recording-${stamp}`;
     // Keep a name the user typed (before or during recording); only refresh the automatic one.
     // Functional update + ref: stop() may run from a stale closure (browser "Stop sharing").
     const prevAuto = autoName.current;
-    setFileName((cur) => (cur.trim() === '' || cur === prevAuto ? newAuto : cur));
+    setFileName((cur) =>
+      cur.trim() === "" || cur === prevAuto ? newAuto : cur,
+    );
     autoName.current = newAuto;
-    setStatus('stopped');
+    setStatus("stopped");
   }
 
   async function handleDownload() {
@@ -206,11 +252,17 @@ export default function App() {
     setExporting(0);
     setError(null);
     try {
-      const blob = await exportRecording(recording, quality, effectiveFormat, setExporting, background?.file ?? null);
+      const blob = await exportRecording(
+        recording,
+        quality,
+        effectiveFormat,
+        setExporting,
+        background?.file ?? null,
+      );
       const name = `${baseName}.${effectiveFormat}`;
       const url = URL.createObjectURL(blob);
       setDownload({ url, name, size: blob.size });
-      const a = document.createElement('a');
+      const a = document.createElement("a");
       a.href = url;
       a.download = name;
       a.click();
@@ -224,12 +276,13 @@ export default function App() {
   function reset() {
     setRecording(null);
     setDownload(null);
-    setStatus('idle');
+    setStatus("idle");
     setElapsed(0);
   }
 
-  const supportsSystem = typeof navigator.mediaDevices?.getDisplayMedia === 'function';
-  const busy = status === 'recording';
+  const supportsSystem =
+    typeof navigator.mediaDevices?.getDisplayMedia === "function";
+  const busy = status === "recording";
 
   return (
     <main className="card">
@@ -241,18 +294,18 @@ export default function App() {
           {SOURCES.map((s) => (
             <button
               key={s.id}
-              className={source === s.id ? 'active' : ''}
-              disabled={busy || (s.id !== 'mic' && !supportsSystem)}
+              className={source === s.id ? "active" : ""}
+              disabled={busy || (s.id !== "mic" && !supportsSystem)}
               onClick={() => setSource(s.id)}
             >
               {s.label}
             </button>
           ))}
         </div>
-        {source !== 'mic' && (
+        {source !== "mic" && (
           <p className="hint">
-            When prompted, choose <b>Entire screen</b> (Windows) or a <b>tab</b> and tick <b>Share system/tab audio</b>.
-            Works in Chrome / Edge.
+            When prompted, choose <b>Entire screen</b> (Windows) or a <b>tab</b>{" "}
+            and tick <b>Share system/tab audio</b>. Works in Chrome / Edge.
           </p>
         )}
       </section>
@@ -261,7 +314,10 @@ export default function App() {
         <h2>2. Quality</h2>
         <div className="options">
           {QUALITIES.map((q) => (
-            <label key={q.id} className={qualityId === q.id ? 'option active' : 'option'}>
+            <label
+              key={q.id}
+              className={qualityId === q.id ? "option active" : "option"}
+            >
               <input
                 type="radio"
                 name="quality"
@@ -280,12 +336,11 @@ export default function App() {
 
       <section>
         <h2>3. Output</h2>
-        <p className="hint">Can be set now or changed after recording.</p>
         <div className="segmented">
           {FORMATS.map((f) => (
             <button
               key={f.id}
-              className={effectiveFormat === f.id ? 'active' : ''}
+              className={effectiveFormat === f.id ? "active" : ""}
               disabled={exporting !== null}
               onClick={() => setFormat(f.id)}
             >
@@ -293,31 +348,36 @@ export default function App() {
             </button>
           ))}
         </div>
-        {quality.id === 'lossless' && effectiveFormat === 'mp3' && (
+        {quality.id === "lossless" && effectiveFormat === "mp3" && (
           <p className="hint">
-            MP3 is exported at its maximum quality (320 kbps, full stereo, original sample rate) — virtually
-            indistinguishable by ear, but only WAV and MP4 are bit-exact.
+            MP3 is exported at its maximum quality (320 kbps, full stereo,
+            original sample rate) — virtually indistinguishable by ear, but only
+            WAV and MP4 are bit-exact.
           </p>
         )}
-        {effectiveFormat === 'mp4' && (
+        {effectiveFormat === "mp4" && (
           <>
-            <p className="hint">
-              Video with a still picture and lossless FLAC audio ({quality.wavBits === 16 ? '16-bit' : '24-bit'}) —
-              {quality.wavBits === 32 ? ' no audible difference from the 32-bit float WAV.' : ' identical sound to the WAV.'} Plays in Windows Media Player, browsers, VLC, etc.
-            </p>
             <div className="background">
               <span className="field-label">Background image</span>
               <div className="background-row">
                 <div className="thumb">
-                  {background ? <img src={background.url} alt="Selected background" /> : <span>Black</span>}
+                  {background ? (
+                    <img src={background.url} alt="Selected background" />
+                  ) : (
+                    <span>Black</span>
+                  )}
                 </div>
                 <div className="background-info">
                   <span className="background-name">
-                    {background ? `${background.file.name} (${background.width}×${background.height})` : 'No image — black 640×360 video'}
+                    {background
+                      ? `${background.file.name} (${background.width}×${background.height})`
+                      : "No image — black 640×360 video"}
                   </span>
                   <div className="row tight">
-                    <label className={`button${exporting !== null ? ' disabled' : ''}`}>
-                      {background ? 'Change image…' : 'Choose image…'}
+                    <label
+                      className={`button${exporting !== null ? " disabled" : ""}`}
+                    >
+                      {background ? "Change image…" : "Choose image…"}
                       <input
                         type="file"
                         accept="image/*"
@@ -325,12 +385,15 @@ export default function App() {
                         disabled={exporting !== null}
                         onChange={(e) => {
                           void pickBackground(e.target.files?.[0]);
-                          e.target.value = ''; // allow re-picking the same file
+                          e.target.value = ""; // allow re-picking the same file
                         }}
                       />
                     </label>
                     {background && (
-                      <button onClick={() => setBackground(null)} disabled={exporting !== null}>
+                      <button
+                        onClick={() => setBackground(null)}
+                        disabled={exporting !== null}
+                      >
                         Remove
                       </button>
                     )}
@@ -338,7 +401,10 @@ export default function App() {
                 </div>
               </div>
               {background && (
-                <p className="hint">The whole image is shown at its own aspect ratio (scaled down to max 1920px).</p>
+                <p className="hint">
+                  The whole image is shown at its own aspect ratio (scaled down
+                  to max 1920px).
+                </p>
               )}
             </div>
           </>
@@ -353,7 +419,7 @@ export default function App() {
               spellCheck={false}
               disabled={exporting !== null}
               onChange={(e) => setFileName(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleDownload()}
+              onKeyDown={(e) => e.key === "Enter" && handleDownload()}
             />
             <span className="ext">.{effectiveFormat}</span>
           </span>
@@ -361,9 +427,13 @@ export default function App() {
       </section>
 
       <section className="controls">
-        {status !== 'recording' ? (
-          <button className="record" onClick={start} disabled={exporting !== null}>
-            ● {status === 'stopped' ? 'New recording' : 'Start recording'}
+        {status !== "recording" ? (
+          <button
+            className="record"
+            onClick={start}
+            disabled={exporting !== null}
+          >
+            ● {status === "stopped" ? "New recording" : "Start recording"}
           </button>
         ) : (
           <button className="stop" onClick={stop}>
@@ -379,16 +449,26 @@ export default function App() {
         </div>
       </section>
 
-      {status === 'stopped' && recording && (
+      {status === "stopped" && recording && (
         <section>
           <h2>4. Download</h2>
           <p className="hint">
-            Captured {fmtTime(recording.channels[0].length / recording.sampleRate)} at {recording.sampleRate / 1000} kHz
-            {download && ' — you can change the output options above and download again'}.
+            Captured{" "}
+            {fmtTime(recording.channels[0].length / recording.sampleRate)} at{" "}
+            {recording.sampleRate / 1000} kHz
+            {download &&
+              " — you can change the output options above and download again"}
+            .
           </p>
           <div className="row">
-            <button className="primary" onClick={handleDownload} disabled={exporting !== null}>
-              {exporting !== null ? `Encoding… ${Math.round(exporting * 100)}%` : `⬇ Download .${effectiveFormat}`}
+            <button
+              className="primary"
+              onClick={handleDownload}
+              disabled={exporting !== null}
+            >
+              {exporting !== null
+                ? `Encoding… ${Math.round(exporting * 100)}%`
+                : `⬇ Download .${effectiveFormat}`}
             </button>
             <button onClick={reset} disabled={exporting !== null}>
               Discard
@@ -396,7 +476,7 @@ export default function App() {
           </div>
           {download && (
             <div className="result">
-              {download.name.endsWith('.mp4') ? (
+              {download.name.endsWith(".mp4") ? (
                 <video controls src={download.url} />
               ) : (
                 <audio controls src={download.url} />
