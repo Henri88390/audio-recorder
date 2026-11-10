@@ -18,7 +18,7 @@ export const QUALITIES: Quality[] = [
   { id: 'low', label: 'Low', description: '22.05 kHz mono · MP3 64 kbps / WAV & MP4 16-bit', sampleRate: 22050, channels: 1, wavBits: 16, mp3Kbps: 64 },
   { id: 'medium', label: 'Medium', description: '44.1 kHz stereo · MP3 128 kbps / WAV & MP4 16-bit', sampleRate: 44100, channels: 2, wavBits: 16, mp3Kbps: 128 },
   { id: 'high', label: 'High', description: '48 kHz stereo · MP3 320 kbps / WAV & MP4 24-bit', sampleRate: 48000, channels: 2, wavBits: 24, mp3Kbps: 320 },
-  { id: 'lossless', label: 'No loss', description: 'Original sample rate, stereo · WAV & MP4 32-bit float (bit-exact) / MP3 320 kbps', sampleRate: null, channels: 2, wavBits: 32, mp3Kbps: 320 },
+  { id: 'lossless', label: 'No loss', description: 'Original sample rate, stereo · WAV 32-bit float (bit-exact) / MP4 24-bit lossless / MP3 320 kbps', sampleRate: null, channels: 2, wavBits: 32, mp3Kbps: 320 },
 ];
 
 export const FORMATS: { id: FormatId; label: string; lossless: boolean }[] = [
@@ -184,8 +184,9 @@ function frameSize(img: HTMLImageElement | null): { width: number; height: numbe
 }
 
 /**
- * MP4 with a still video track (black, or the given background image) and uncompressed
- * PCM audio (same samples as the WAV export).
+ * MP4 with a still video track (black, or the given background image) and lossless FLAC audio
+ * (same integer samples as the 16/24-bit WAV; 32-bit float sources become 24-bit, as FLAC has no float).
+ * FLAC-in-MP4 plays in browsers and Windows Media Player, unlike raw PCM-in-MP4.
  */
 async function encodeMp4(
   channels: Float32Array[],
@@ -194,14 +195,11 @@ async function encodeMp4(
   background: Blob | null,
   onProgress: (p: number) => void,
 ): Promise<Blob> {
-  const { Output, Mp4OutputFormat, BufferTarget, CanvasSource, AudioSampleSource, AudioSample, canEncodeVideo } = await import('mediabunny');
+  const { Output, Mp4OutputFormat, BufferTarget, CanvasSource, EncodedAudioPacketSource, EncodedPacket, canEncodeVideo } = await import('mediabunny');
+  const { encodeFlac } = await import('./flac');
 
-  // Integer samples are passed as n / 2^(bits-1), which mediabunny converts back to exactly n.
-  let planes = channels;
-  if (bits !== 32) {
-    const scale = 2 ** (bits - 1);
-    planes = toIntPcm(channels, bits).map((ch) => Float32Array.from(ch, (n) => n / scale));
-  }
+  const flacBits = bits === 16 ? 16 : 24;
+  const flac = await encodeFlac(toIntPcm(channels, flacBits), sampleRate, flacBits, (p) => onProgress(p * 0.8));
 
   const img = background ? await loadImage(background) : null;
   const { width, height } = frameSize(img);
@@ -219,30 +217,45 @@ async function encodeMp4(
   const bitrate = img ? Math.round(width * height * 4) : 50_000;
   const output = new Output({ format: new Mp4OutputFormat({ fastStart: 'in-memory' }), target: new BufferTarget() });
   const video = new CanvasSource(canvas, { codec: videoCodec, bitrate, keyFrameInterval: 10 });
-  const audio = new AudioSampleSource({ codec: bits === 32 ? 'pcm-f32' : bits === 24 ? 'pcm-s24' : 'pcm-s16' });
+  const audio = new EncodedAudioPacketSource('flac');
   output.addVideoTrack(video);
   output.addAudioTrack(audio);
   await output.start();
 
-  const frames = planes[0].length;
-  const duration = frames / sampleRate;
-  const block = sampleRate; // 1 second per chunk
-  for (let start = 0; start < frames; start += block) {
-    const len = Math.min(block, frames - start);
-    const data = new Float32Array(len * planes.length);
-    planes.forEach((p, c) => data.set(p.subarray(start, start + len), c * len));
-    const sample = new AudioSample({ data, format: 'f32-planar', numberOfChannels: planes.length, sampleRate, timestamp: start / sampleRate });
-    await audio.add(sample);
-    sample.close();
-
-    const t = start / sampleRate;
+  const duration = channels[0].length / sampleRate;
+  const meta = { decoderConfig: { codec: 'flac', numberOfChannels: channels.length, sampleRate, description: flac.description } };
+  let next = 0;
+  for (let t = 0; t < duration; t += 1) {
+    for (; next < flac.frames.length && flac.frames[next].timestamp < t + 1; next++) {
+      const f = flac.frames[next];
+      await audio.add(new EncodedPacket(f.data, 'key', f.timestamp, f.duration), next === 0 ? meta : undefined);
+    }
     await video.add(t, Math.min(1, duration - t));
-    onProgress(Math.min(1, (start + len) / frames));
+    onProgress(0.8 + 0.2 * Math.min(1, (t + 1) / duration));
     await yieldToUi();
   }
 
   await output.finalize();
-  return new Blob([output.target.buffer!], { type: 'video/mp4' });
+  const bytes = new Uint8Array(output.target.buffer!);
+  setFlacSampleSize(bytes, flacBits);
+  return new Blob([bytes], { type: 'video/mp4' });
+}
+
+/**
+ * mediabunny always writes samplesize=16 in the 'fLaC' sample entry, but FLAC-in-ISOBMFF requires the
+ * real bit depth there; Windows Media Foundation decodes 24-bit audio as 16-bit noise otherwise.
+ */
+function setFlacSampleSize(mp4: Uint8Array, bits: number) {
+  const view = new DataView(mp4.buffer, mp4.byteOffset, mp4.byteLength);
+  // The moov box precedes mdat (fastStart), so the first 'fLaC' + 6 reserved zero bytes is the sample entry.
+  for (let i = 4; i + 24 < mp4.length; i++) {
+    if (mp4[i] === 0x66 && mp4[i + 1] === 0x4c && mp4[i + 2] === 0x61 && mp4[i + 3] === 0x43 && view.getUint32(i + 4) === 0 && view.getUint16(i + 8) === 0) {
+      // type(4) reserved(6) data_ref_index(2) version(2) revision(2) vendor(4) channelcount(2) -> samplesize
+      view.setUint16(i + 22, bits);
+      return;
+    }
+  }
+  throw new Error('FLAC sample entry not found in MP4');
 }
 
 export async function exportRecording(

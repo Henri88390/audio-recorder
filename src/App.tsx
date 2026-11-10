@@ -302,8 +302,8 @@ export default function App() {
         {effectiveFormat === 'mp4' && (
           <>
             <p className="hint">
-              Video with a still picture and uncompressed PCM audio ({quality.wavBits === 32 ? '32-bit float' : `${quality.wavBits}-bit`}) —
-              identical sound to the WAV. Plays in Chrome/Edge, VLC and ffmpeg-based players; some older players may not support PCM audio in MP4.
+              Video with a still picture and lossless FLAC audio ({quality.wavBits === 16 ? '16-bit' : '24-bit'}) —
+              {quality.wavBits === 32 ? ' no audible difference from the 32-bit float WAV.' : ' identical sound to the WAV.'} Plays in Windows Media Player, browsers, VLC, etc.
             </p>
             <div className="background">
               <span className="field-label">Background image</span>
