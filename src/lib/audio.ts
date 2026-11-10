@@ -24,7 +24,7 @@ export const QUALITIES: Quality[] = [
 export const FORMATS: { id: FormatId; label: string; lossless: boolean }[] = [
   { id: 'wav', label: 'WAV (uncompressed)', lossless: true },
   { id: 'mp3', label: 'MP3 (compressed)', lossless: false },
-  { id: 'mp4', label: 'MP4 (black video)', lossless: true },
+  { id: 'mp4', label: 'MP4 (video)', lossless: true },
 ];
 
 const MP3_SAMPLE_RATES = [8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000];
@@ -159,8 +159,41 @@ async function encodeMp3(channels: Float32Array[], sampleRate: number, kbps: num
   return new Blob(parts, { type: 'audio/mpeg' });
 }
 
-/** MP4 with a black video track and uncompressed PCM audio (same samples as the WAV export). */
-async function encodeMp4(channels: Float32Array[], sampleRate: number, bits: 16 | 24 | 32, onProgress: (p: number) => void): Promise<Blob> {
+const MAX_VIDEO_SIDE = 1920;
+
+/** Decodes an image file (JPEG, PNG, WebP, GIF, AVIF, SVG…). Rejects if the browser can't read it. */
+export async function loadImage(file: Blob): Promise<HTMLImageElement> {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    if (!img.naturalWidth || !img.naturalHeight) throw new Error('Image has no size');
+    return img;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/** Video frame size: the image's own aspect ratio, longest side capped, even dimensions (required by H.264). */
+function frameSize(img: HTMLImageElement | null): { width: number; height: number } {
+  if (!img) return { width: 640, height: 360 };
+  const scale = Math.min(1, MAX_VIDEO_SIDE / Math.max(img.naturalWidth, img.naturalHeight));
+  const even = (n: number) => Math.max(2, Math.round((n * scale) / 2) * 2);
+  return { width: even(img.naturalWidth), height: even(img.naturalHeight) };
+}
+
+/**
+ * MP4 with a still video track (black, or the given background image) and uncompressed
+ * PCM audio (same samples as the WAV export).
+ */
+async function encodeMp4(
+  channels: Float32Array[],
+  sampleRate: number,
+  bits: 16 | 24 | 32,
+  background: Blob | null,
+  onProgress: (p: number) => void,
+): Promise<Blob> {
   const { Output, Mp4OutputFormat, BufferTarget, CanvasSource, AudioSampleSource, AudioSample, canEncodeVideo } = await import('mediabunny');
 
   // Integer samples are passed as n / 2^(bits-1), which mediabunny converts back to exactly n.
@@ -170,16 +203,22 @@ async function encodeMp4(channels: Float32Array[], sampleRate: number, bits: 16 
     planes = toIntPcm(channels, bits).map((ch) => Float32Array.from(ch, (n) => n / scale));
   }
 
-  const width = 640;
-  const height = 360;
+  const img = background ? await loadImage(background) : null;
+  const { width, height } = frameSize(img);
   const videoCodec = (await canEncodeVideo('avc', { width, height })) ? 'avc' : 'vp9';
   const canvas = new OffscreenCanvas(width, height);
   const g = canvas.getContext('2d')!;
-  g.fillStyle = '#000';
+  g.fillStyle = '#000'; // also behind transparent images
   g.fillRect(0, 0, width, height);
+  if (img) {
+    g.imageSmoothingQuality = 'high';
+    g.drawImage(img, 0, 0, width, height);
+  }
 
+  // The picture never changes, so only key frames carry data: give them a generous budget.
+  const bitrate = img ? Math.round(width * height * 4) : 50_000;
   const output = new Output({ format: new Mp4OutputFormat({ fastStart: 'in-memory' }), target: new BufferTarget() });
-  const video = new CanvasSource(canvas, { codec: videoCodec, bitrate: 50_000, keyFrameInterval: 2 });
+  const video = new CanvasSource(canvas, { codec: videoCodec, bitrate, keyFrameInterval: 10 });
   const audio = new AudioSampleSource({ codec: bits === 32 ? 'pcm-f32' : bits === 24 ? 'pcm-s24' : 'pcm-s16' });
   output.addVideoTrack(video);
   output.addAudioTrack(audio);
@@ -211,11 +250,12 @@ export async function exportRecording(
   quality: Quality,
   format: FormatId,
   onProgress: (p: number) => void = () => {},
+  background: Blob | null = null,
 ): Promise<Blob> {
   let rate = quality.sampleRate ?? rec.sampleRate;
   if (format === 'mp3' && !MP3_SAMPLE_RATES.includes(rate)) rate = 48000;
   const data = await convert(rec, rate, quality.channels);
   if (format === 'mp3') return encodeMp3(data, rate, quality.mp3Kbps, onProgress);
-  if (format === 'mp4') return encodeMp4(data, rate, quality.wavBits, onProgress);
+  if (format === 'mp4') return encodeMp4(data, rate, quality.wavBits, background, onProgress);
   return encodeWav(data, rate, quality.wavBits);
 }

@@ -4,6 +4,7 @@ import {
   QUALITIES,
   concatChunks,
   exportRecording,
+  loadImage,
   type FormatId,
   type QualityId,
   type Recording,
@@ -58,6 +59,8 @@ export default function App() {
   const [exporting, setExporting] = useState<number | null>(null);
   const [download, setDownload] = useState<{ url: string; name: string; size: number } | null>(null);
   const [fileName, setFileName] = useState('');
+  const autoName = useRef('');
+  const [background, setBackground] = useState<{ file: File; url: string; width: number; height: number } | null>(null);
 
   const session = useRef<Session | null>(null);
   const timers = useRef<{ raf: number; interval: number }>({ raf: 0, interval: 0 });
@@ -67,6 +70,18 @@ export default function App() {
   const baseName = sanitizeFileName(fileName) || 'recording';
 
   useEffect(() => () => { if (download) URL.revokeObjectURL(download.url); }, [download]);
+  useEffect(() => () => { if (background) URL.revokeObjectURL(background.url); }, [background]);
+
+  async function pickBackground(file: File | undefined) {
+    if (!file) return;
+    setError(null);
+    try {
+      const img = await loadImage(file);
+      setBackground({ file, url: URL.createObjectURL(file), width: img.naturalWidth, height: img.naturalHeight });
+    } catch {
+      setError(`“${file.name}” can't be used as an image. Try a JPEG, PNG or WebP file.`);
+    }
+  }
 
   async function getStreams(): Promise<MediaStream[]> {
     const streams: MediaStream[] = [];
@@ -177,7 +192,12 @@ export default function App() {
     }
     setRecording(rec);
     const stamp = new Date().toLocaleString('sv').replace(' ', '_').replace(/:/g, '-');
-    setFileName(`recording-${stamp}`);
+    const newAuto = `recording-${stamp}`;
+    // Keep a name the user typed (before or during recording); only refresh the automatic one.
+    // Functional update + ref: stop() may run from a stale closure (browser "Stop sharing").
+    const prevAuto = autoName.current;
+    setFileName((cur) => (cur.trim() === '' || cur === prevAuto ? newAuto : cur));
+    autoName.current = newAuto;
     setStatus('stopped');
   }
 
@@ -186,7 +206,7 @@ export default function App() {
     setExporting(0);
     setError(null);
     try {
-      const blob = await exportRecording(recording, quality, effectiveFormat, setExporting);
+      const blob = await exportRecording(recording, quality, effectiveFormat, setExporting, background?.file ?? null);
       const name = `${baseName}.${effectiveFormat}`;
       const url = URL.createObjectURL(blob);
       setDownload({ url, name, size: blob.size });
@@ -258,6 +278,88 @@ export default function App() {
         </div>
       </section>
 
+      <section>
+        <h2>3. Output</h2>
+        <p className="hint">Can be set now or changed after recording.</p>
+        <div className="segmented">
+          {FORMATS.map((f) => (
+            <button
+              key={f.id}
+              className={effectiveFormat === f.id ? 'active' : ''}
+              disabled={exporting !== null}
+              onClick={() => setFormat(f.id)}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+        {quality.id === 'lossless' && effectiveFormat === 'mp3' && (
+          <p className="hint">
+            MP3 is exported at its maximum quality (320 kbps, full stereo, original sample rate) — virtually
+            indistinguishable by ear, but only WAV and MP4 are bit-exact.
+          </p>
+        )}
+        {effectiveFormat === 'mp4' && (
+          <>
+            <p className="hint">
+              Video with a still picture and uncompressed PCM audio ({quality.wavBits === 32 ? '32-bit float' : `${quality.wavBits}-bit`}) —
+              identical sound to the WAV. Plays in Chrome/Edge, VLC and ffmpeg-based players; some older players may not support PCM audio in MP4.
+            </p>
+            <div className="background">
+              <span className="field-label">Background image</span>
+              <div className="background-row">
+                <div className="thumb">
+                  {background ? <img src={background.url} alt="Selected background" /> : <span>Black</span>}
+                </div>
+                <div className="background-info">
+                  <span className="background-name">
+                    {background ? `${background.file.name} (${background.width}×${background.height})` : 'No image — black 640×360 video'}
+                  </span>
+                  <div className="row tight">
+                    <label className={`button${exporting !== null ? ' disabled' : ''}`}>
+                      {background ? 'Change image…' : 'Choose image…'}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        hidden
+                        disabled={exporting !== null}
+                        onChange={(e) => {
+                          void pickBackground(e.target.files?.[0]);
+                          e.target.value = ''; // allow re-picking the same file
+                        }}
+                      />
+                    </label>
+                    {background && (
+                      <button onClick={() => setBackground(null)} disabled={exporting !== null}>
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+              {background && (
+                <p className="hint">The whole image is shown at its own aspect ratio (scaled down to max 1920px).</p>
+              )}
+            </div>
+          </>
+        )}
+        <label className="filename">
+          <span>File name</span>
+          <span className="filename-input">
+            <input
+              type="text"
+              value={fileName}
+              placeholder="Automatic: recording-date_time"
+              spellCheck={false}
+              disabled={exporting !== null}
+              onChange={(e) => setFileName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleDownload()}
+            />
+            <span className="ext">.{effectiveFormat}</span>
+          </span>
+        </label>
+      </section>
+
       <section className="controls">
         {status !== 'recording' ? (
           <button className="record" onClick={start} disabled={exporting !== null}>
@@ -279,50 +381,11 @@ export default function App() {
 
       {status === 'stopped' && recording && (
         <section>
-          <h2>3. Format &amp; download</h2>
+          <h2>4. Download</h2>
           <p className="hint">
-            Captured {fmtTime(recording.channels[0].length / recording.sampleRate)} at {recording.sampleRate / 1000} kHz.
+            Captured {fmtTime(recording.channels[0].length / recording.sampleRate)} at {recording.sampleRate / 1000} kHz
+            {download && ' — you can change the output options above and download again'}.
           </p>
-          <div className="segmented">
-            {FORMATS.map((f) => (
-              <button
-                key={f.id}
-                className={effectiveFormat === f.id ? 'active' : ''}
-                disabled={exporting !== null}
-                onClick={() => setFormat(f.id)}
-              >
-                {f.label}
-              </button>
-            ))}
-          </div>
-          {quality.id === 'lossless' && effectiveFormat === 'mp3' && (
-            <p className="hint">
-              MP3 is exported at its maximum quality (320 kbps, full stereo, original sample rate) — virtually
-              indistinguishable by ear, but only WAV and MP4 are bit-exact.
-            </p>
-          )}
-          {effectiveFormat === 'mp4' && (
-            <p className="hint">
-              Black 640×360 video with uncompressed PCM audio ({quality.wavBits === 32 ? '32-bit float' : `${quality.wavBits}-bit`}) —
-              identical sound to the WAV. Plays in Chrome/Edge, VLC and ffmpeg-based players; some older players may not support PCM audio in MP4.
-            </p>
-          )}
-          {download && <p className="hint">You can switch format and download again.</p>}
-          <label className="filename">
-            <span>File name</span>
-            <span className="filename-input">
-              <input
-                type="text"
-                value={fileName}
-                placeholder="recording"
-                spellCheck={false}
-                disabled={exporting !== null}
-                onChange={(e) => setFileName(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleDownload()}
-              />
-              <span className="ext">.{effectiveFormat}</span>
-            </span>
-          </label>
           <div className="row">
             <button className="primary" onClick={handleDownload} disabled={exporting !== null}>
               {exporting !== null ? `Encoding… ${Math.round(exporting * 100)}%` : `⬇ Download .${effectiveFormat}`}
@@ -333,7 +396,11 @@ export default function App() {
           </div>
           {download && (
             <div className="result">
-              <audio controls src={download.url} />
+              {download.name.endsWith('.mp4') ? (
+                <video controls src={download.url} />
+              ) : (
+                <audio controls src={download.url} />
+              )}
               <a href={download.url} download={download.name}>
                 {download.name} ({fmtSize(download.size)})
               </a>
