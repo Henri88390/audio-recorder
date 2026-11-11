@@ -198,12 +198,19 @@ async function encodeMp4(
   const { Output, Mp4OutputFormat, BufferTarget, CanvasSource, EncodedAudioPacketSource, EncodedPacket, canEncodeVideo } = await import('mediabunny');
   const { encodeFlac } = await import('./flac');
 
-  const flacBits = bits === 16 ? 16 : 24;
-  const flac = await encodeFlac(toIntPcm(channels, flacBits), sampleRate, flacBits, (p) => onProgress(p * 0.8));
-
   const img = background ? await loadImage(background) : null;
   const { width, height } = frameSize(img);
-  const videoCodec = (await canEncodeVideo('avc', { width, height })) ? 'avc' : 'vp9';
+  if (typeof VideoEncoder === 'undefined' || typeof OffscreenCanvas === 'undefined') {
+    throw new Error('MP4 export is not supported in this browser. Download WAV or MP3 instead, or use an up-to-date desktop browser.');
+  }
+  const videoCodec = (await canEncodeVideo('avc', { width, height }))
+    ? 'avc'
+    : (await canEncodeVideo('vp9', { width, height })) ? 'vp9' : null;
+  if (!videoCodec) {
+    throw new Error('No supported video encoder is available. Download WAV or MP3 instead.');
+  }
+  const flacBits = bits === 16 ? 16 : 24;
+  const flac = await encodeFlac(toIntPcm(channels, flacBits), sampleRate, flacBits, (p) => onProgress(p * 0.8));
   const canvas = new OffscreenCanvas(width, height);
   const g = canvas.getContext('2d')!;
   g.fillStyle = '#000'; // also behind transparent images

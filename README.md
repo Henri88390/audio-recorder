@@ -36,5 +36,6 @@ npm run dev
 
 ## Notes
 
+- **Mobile:** microphone recording works in supported, up-to-date mobile browsers over **HTTPS**. The app selects the microphone when screen capture is unavailable. Open the deployed HTTPS URL (not an `http://192.168...` development URL), allow microphone access, and keep the page foregrounded with the screen unlocked. System audio generally cannot be captured on mobile. WAV and MP3 export locally; MP4 export also requires browser video-encoding support, and playback support varies by device. Long recordings can exhaust a phone's memory.
 - System audio uses `getDisplayMedia` and works in **Chrome / Edge**. In the share dialog pick *Entire screen* (Windows) or a tab and enable *Share system/tab audio*. Firefox/Safari don't support capturing system audio — use the mic mode there.
 - Audio is captured as raw PCM through an AudioWorklet (`public/recorder-worklet.js`) and only encoded on download, so quality/format can be applied losslessly. Raw capture uses ~23 MB per minute of RAM.

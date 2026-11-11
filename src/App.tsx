@@ -11,7 +11,7 @@ import {
 } from "./lib/audio";
 
 type Source = "system" | "mic" | "both";
-type Status = "idle" | "recording" | "stopped";
+type Status = "idle" | "starting" | "recording" | "stopped";
 
 const SOURCES: { id: Source; label: string }[] = [
   { id: "system", label: "🔊 Computer audio" },
@@ -50,7 +50,18 @@ const sanitizeFileName = (name: string) =>
     .replace(/[. ]+$/, "");
 
 export default function App() {
-  const [source, setSource] = useState<Source>("system");
+  const supportsSystem =
+    typeof navigator.mediaDevices?.getDisplayMedia === "function";
+  const captureError = !window.isSecureContext
+    ? "Recording requires HTTPS. Open the secure deployed site; a phone cannot record from an http:// local network address."
+    : typeof navigator.mediaDevices?.getUserMedia !== "function"
+      ? "Microphone recording is not supported in this browser. Try a current Safari or Chrome browser instead of an in-app browser."
+      : typeof AudioContext === "undefined" || typeof AudioWorkletNode === "undefined"
+        ? "This browser does not support audio recording. Update your browser and try again."
+        : null;
+  const [source, setSource] = useState<Source>(
+    supportsSystem ? "system" : "mic",
+  );
   const [qualityId, setQualityId] = useState<QualityId>("high");
   const [format, setFormat] = useState<FormatId>("mp3");
   const [status, setStatus] = useState<Status>("idle");
@@ -115,6 +126,9 @@ export default function App() {
   }
 
   async function getStreams(): Promise<MediaStream[]> {
+    if (captureError) throw new Error(captureError);
+    if (source !== "mic" && !supportsSystem)
+      throw new Error("System audio capture is unavailable. Select Microphone.");
     const streams: MediaStream[] = [];
     try {
       if (source !== "mic") {
@@ -145,12 +159,27 @@ export default function App() {
   }
 
   async function start() {
+    if (session.current || status === "starting") return;
+    if (captureError) {
+      setError(captureError);
+      return;
+    }
     setError(null);
+    setStatus("starting");
     setRecording(null);
     setDownload(null);
+    let ctx: AudioContext | null = null;
+    let streams: MediaStream[] = [];
     try {
-      const streams = await getStreams();
-      const ctx = new AudioContext({ latencyHint: "playback" });
+      ctx = new AudioContext({ latencyHint: "playback" });
+      // Unlock audio while the tap still has user activation (required on mobile).
+      const resumed = ctx.resume();
+      const captured = getStreams();
+      const results = await Promise.allSettled([resumed, captured]);
+      if (results[1].status === "fulfilled") streams = results[1].value;
+      for (const result of results) {
+        if (result.status === "rejected") throw result.reason;
+      }
       await ctx.audioWorklet.addModule("/recorder-worklet.js");
 
       const node = new AudioWorkletNode(ctx, "recorder-processor", {
@@ -201,6 +230,9 @@ export default function App() {
       );
       setStatus("recording");
     } catch (e) {
+      streams.forEach((stream) => stream.getTracks().forEach((track) => track.stop()));
+      if (ctx && ctx.state !== "closed") await ctx.close();
+      setStatus("idle");
       if ((e as DOMException).name !== "NotAllowedError")
         setError((e as Error).message);
       else setError("Permission denied or capture cancelled.");
@@ -280,9 +312,7 @@ export default function App() {
     setElapsed(0);
   }
 
-  const supportsSystem =
-    typeof navigator.mediaDevices?.getDisplayMedia === "function";
-  const busy = status === "recording";
+  const busy = status === "recording" || status === "starting";
 
   return (
     <main className="card">
@@ -308,6 +338,14 @@ export default function App() {
             and tick <b>Share system/tab audio</b>. Works in Chrome / Edge.
           </p>
         )}
+        {!supportsSystem && (
+          <p className="hint">
+            Microphone recording is available on supported mobile browsers over
+            HTTPS. System audio capture requires a supported desktop browser.
+            Keep this page open and your screen unlocked while recording.
+          </p>
+        )}
+        {captureError && <p className="error" role="alert">{captureError}</p>}
       </section>
 
       <section>
@@ -431,9 +469,9 @@ export default function App() {
           <button
             className="record"
             onClick={start}
-            disabled={exporting !== null}
+            disabled={exporting !== null || status === "starting" || !!captureError}
           >
-            ● {status === "stopped" ? "New recording" : "Start recording"}
+            ● {status === "starting" ? "Starting…" : status === "stopped" ? "New recording" : "Start recording"}
           </button>
         ) : (
           <button className="stop" onClick={stop}>
@@ -477,7 +515,7 @@ export default function App() {
           {download && (
             <div className="result">
               {download.name.endsWith(".mp4") ? (
-                <video controls src={download.url} />
+                <video controls playsInline src={download.url} />
               ) : (
                 <audio controls src={download.url} />
               )}
