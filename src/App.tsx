@@ -56,7 +56,8 @@ export default function App() {
     ? "Recording requires HTTPS. Open the secure deployed site; a phone cannot record from an http:// local network address."
     : typeof navigator.mediaDevices?.getUserMedia !== "function"
       ? "Microphone recording is not supported in this browser. Try a current Safari or Chrome browser instead of an in-app browser."
-      : typeof AudioContext === "undefined" || typeof AudioWorkletNode === "undefined"
+      : typeof AudioContext === "undefined" ||
+          typeof AudioWorkletNode === "undefined"
         ? "This browser does not support audio recording. Update your browser and try again."
         : null;
   const [source, setSource] = useState<Source>(
@@ -128,7 +129,9 @@ export default function App() {
   async function getStreams(): Promise<MediaStream[]> {
     if (captureError) throw new Error(captureError);
     if (source !== "mic" && !supportsSystem)
-      throw new Error("System audio capture is unavailable. Select Microphone.");
+      throw new Error(
+        "System audio capture is unavailable. Select Microphone.",
+      );
     const streams: MediaStream[] = [];
     try {
       if (source !== "mic") {
@@ -230,7 +233,9 @@ export default function App() {
       );
       setStatus("recording");
     } catch (e) {
-      streams.forEach((stream) => stream.getTracks().forEach((track) => track.stop()));
+      streams.forEach((stream) =>
+        stream.getTracks().forEach((track) => track.stop()),
+      );
       if (ctx && ctx.state !== "closed") await ctx.close();
       setStatus("idle");
       if ((e as DOMException).name !== "NotAllowedError")
@@ -316,8 +321,8 @@ export default function App() {
 
   return (
     <main className="card">
+      xDDDD
       <h1>🎙️ Audio Recorder</h1>
-
       <section>
         <h2>1. Source</h2>
         <div className="segmented">
@@ -345,9 +350,12 @@ export default function App() {
             Keep this page open and your screen unlocked while recording.
           </p>
         )}
-        {captureError && <p className="error" role="alert">{captureError}</p>}
+        {captureError && (
+          <p className="error" role="alert">
+            {captureError}
+          </p>
+        )}
       </section>
-
       <section>
         <h2>2. Quality</h2>
         <div className="options">
@@ -371,7 +379,6 @@ export default function App() {
           ))}
         </div>
       </section>
-
       <section>
         <h2>3. Output</h2>
         <div className="segmented">
@@ -463,15 +470,21 @@ export default function App() {
           </span>
         </label>
       </section>
-
       <section className="controls">
         {status !== "recording" ? (
           <button
             className="record"
             onClick={start}
-            disabled={exporting !== null || status === "starting" || !!captureError}
+            disabled={
+              exporting !== null || status === "starting" || !!captureError
+            }
           >
-            ● {status === "starting" ? "Starting…" : status === "stopped" ? "New recording" : "Start recording"}
+            ●{" "}
+            {status === "starting"
+              ? "Starting…"
+              : status === "stopped"
+                ? "New recording"
+                : "Start recording"}
           </button>
         ) : (
           <button className="stop" onClick={stop}>
@@ -486,7 +499,6 @@ export default function App() {
           <div style={{ width: `${Math.min(100, level * 100)}%` }} />
         </div>
       </section>
-
       {status === "stopped" && recording && (
         <section>
           <h2>4. Download</h2>
@@ -526,7 +538,6 @@ export default function App() {
           )}
         </section>
       )}
-
       {error && <p className="error">{error}</p>}
     </main>
   );
