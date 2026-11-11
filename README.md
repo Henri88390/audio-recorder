@@ -34,6 +34,62 @@ npm install
 npm run dev
 ```
 
+## Test on a phone with ngrok
+
+[ngrok](https://ngrok.com/) creates a public HTTPS tunnel to the development server running on your computer. Open its forwarding URL on your phone to test the local app, including live code updates, without deploying it. HTTPS is required for microphone access on a phone; a plain `http://192.168...` network address is not sufficient.
+
+### Setup (Windows)
+
+1. Install ngrok in PowerShell, then reopen your terminal:
+
+   ```powershell
+   winget install --id Ngrok.Ngrok --exact
+   ```
+
+2. Create an ngrok account and copy your token from [Your Authtoken](https://dashboard.ngrok.com/get-started/your-authtoken). Configure it locally:
+
+   ```powershell
+   ngrok config add-authtoken YOUR_TOKEN
+   ```
+
+   Replace `YOUR_TOKEN` with your token. Keep it private: do not commit it or put it in the app.
+
+### Start testing
+
+1. From the project folder, start Vite in one terminal:
+
+   ```powershell
+   npm run dev -- --port 5173 --strictPort
+   ```
+
+   Check that `http://localhost:5173` opens on your computer.
+
+2. In a second terminal, start the tunnel to the same port:
+
+   ```powershell
+   ngrok http 5173
+   ```
+
+3. Allow the forwarding **hostname** in `server.allowedHosts` in [vite.config.ts](./vite.config.ts). For example, if ngrok shows `https://your-name.ngrok-free.dev`:
+
+   ```ts
+   server: {
+     allowedHosts: ['your-name.ngrok-free.dev'],
+   },
+   ```
+
+   Replace the example with your actual hostname (no `https://` or path), retaining the existing plugins configuration. The config already contains the hostname used during development; update it if your tunnel hostname differs. Do not use `allowedHosts: true`, which disables host protection. Restart Vite if necessary.
+
+4. Open ngrok's **HTTPS forwarding URL** on your phone, allow microphone access, and keep the page open with the screen unlocked. System audio capture generally is not available on mobile.
+
+Keep both terminals running. The tunnel exposes your development app publicly; stop ngrok with **Ctrl+C** when finished. Audio recording and encoding still happen in the phone's browser, not on ngrok.
+
+### Troubleshooting
+
+- **Connection refused:** make sure Vite is running and the port in `ngrok http` matches Vite's port. Check the localhost URL on your computer first.
+- **Blocked host / `server.allowedHosts`:** add the exact current forwarding hostname to the allowlist and restart Vite.
+- **`navigator.mediaDevices` unavailable:** use the HTTPS forwarding URL in an up-to-date browser, rather than a plain HTTP network URL or an in-app browser.
+
 ## Notes
 
 - **Mobile:** microphone recording works in supported, up-to-date mobile browsers over **HTTPS**. The app selects the microphone when screen capture is unavailable. Open the deployed HTTPS URL (not an `http://192.168...` development URL), allow microphone access, and keep the page foregrounded with the screen unlocked. System audio generally cannot be captured on mobile. WAV and MP3 export locally; MP4 export also requires browser video-encoding support, and playback support varies by device. Long recordings can exhaust a phone's memory.
